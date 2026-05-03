@@ -1272,12 +1272,21 @@ async def build_main_agent(
             req.audio_urls = []
             if sel_model := event.get_extra("selected_model"):
                 req.model = sel_model
-            if config.provider_wake_prefix and not event.message_str.startswith(
-                config.provider_wake_prefix
+            # 如果消息不是 @ 机器人，仅在未以 provider_wake_prefix 开头时跳过
+            if (
+                not getattr(event, "is_at_bot", False)
+                and config.provider_wake_prefix
+                and not event.message_str.startswith(config.provider_wake_prefix)
             ):
                 return None
 
-            req.prompt = event.message_str[len(config.provider_wake_prefix) :]
+            # 仅在消息以 provider_wake_prefix 开头时截断前缀，否则保留原始消息
+            if config.provider_wake_prefix and event.message_str.startswith(
+                config.provider_wake_prefix
+            ):
+                req.prompt = event.message_str[len(config.provider_wake_prefix) :]
+            else:
+                req.prompt = event.message_str
 
             # media files attachments
             for comp in event.message_obj.message:

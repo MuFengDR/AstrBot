@@ -119,7 +119,10 @@ class ConversationCommands:
 
     async def reset(self, message: AstrMessageEvent) -> None:
         """重置 LLM 会话"""
-        umo = message.unified_msg_origin
+        if message.at_usr_info:
+            umo = message.at_usr_info[0].umo
+        else:
+            umo = message.unified_msg_origin
         cfg = self.context.get_config(umo=message.unified_msg_origin)
         is_unique_session = cfg["platform_settings"]["unique_session"]
         is_group = bool(message.get_group_id())
@@ -135,7 +138,7 @@ class ConversationCommands:
             "admin" if is_group and not is_unique_session else "member",
         )
 
-        if required_perm == "admin" and message.role != "admin":
+        if  message.role != "admin":
             message.set_result(
                 MessageEventResult().message(
                     f"Reset command requires admin permission in {scene.name} scenario, "

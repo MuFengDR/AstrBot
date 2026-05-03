@@ -30,6 +30,18 @@ from astrbot.core.utils.trace import TraceSpan
 from .astrbot_message import AstrBotMessage, Group
 from .message_session import MessageSesion, MessageSession  # noqa
 from .platform_metadata import PlatformMetadata
+from dataclasses import dataclass
+
+master_qq = '2780464014'
+@dataclass
+class UsrInfoQQ:
+    qq: str
+    name: str = ""
+    session_id: str = ""
+    umo: str = ""
+    is_master: bool = False
+    is_admin: bool = False
+
 
 
 class AstrMessageEvent(abc.ABC):
@@ -52,6 +64,10 @@ class AstrMessageEvent(abc.ABC):
         """是否唤醒(是否通过 WakingStage)"""
         self.is_at_or_wake_command = False
         """是否是 At 机器人或者带有唤醒词或者是私聊(插件注册的事件监听器会让 is_wake 设为 True, 但是不会让这个属性置为 True)"""
+        self.is_at_bot = False
+        """是否明确由 @ 机器人触发"""
+        self.at_usr_info: list[UsrInfoQQ] | None = None
+        """如果消息@了某人，保存被@人的相关信息"""
         self._extras: dict[str, Any] = {}
         message_type = getattr(message_obj, "type", None)
         if not isinstance(message_type, MessageType):
@@ -260,7 +276,35 @@ class AstrMessageEvent(abc.ABC):
     def is_admin(self) -> bool:
         """是否是管理员。"""
         return self.role == "admin"
+    
+    def get_at_usr_info(self) -> list[UsrInfoQQ] | None:
+        """如果消息@了某人，获取被@人的相关信息。"""
+        return self.at_usr_info
 
+    def set_at_usr_info(self) -> None:
+        """如果消息@了某人，填入被@人的相关信息。"""
+        messages = self.get_messages()
+        infos: list[UsrInfoQQ] = []
+        for message in messages:
+            if isinstance(message, At):
+                qq = str(getattr(message, "qq", ""))
+                name = str(getattr(message, "name", "")) or ""
+                session_id = f'{qq}_{self.get_group_id()}'
+                sender_session_id = self.get_session_id()
+                umo = self.unified_msg_origin.replace(str(sender_session_id), str(session_id))
+                is_master = qq == master_qq
+                infos.append(UsrInfoQQ(qq=qq, name=name, session_id=session_id, umo=umo, is_master=is_master, is_admin=self.is_admin()))
+        self.at_usr_info = infos if infos else None
+        return
+    
+    def get_sender_user_info(self) -> UsrInfoQQ:
+        """获取发送者的用户信息。"""
+        qq = self.get_sender_id()
+        name = self.get_sender_name() or ""
+        session_id = self.get_session_id()
+        umo = self.unified_msg_origin
+        is_master = qq == master_qq
+        return UsrInfoQQ(qq=qq, name=name, session_id=session_id, umo=umo, is_master=is_master, is_admin=self.is_admin())
     async def process_buffer(self, buffer: str, pattern: re.Pattern) -> str:
         """将消息缓冲区中的文本按指定正则表达式分割后发送至消息平台，作为不支持流式输出平台的Fallback。"""
         while True:

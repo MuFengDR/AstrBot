@@ -203,6 +203,24 @@ class SendMessageToUserTool(FunctionTool[AstrAgentContext]):
             except Exception as exc:
                 return f"error: failed to build messages[{idx}] component: {exc}"
 
+        # If caller passed a numeric session (e.g. QQ number / session_tag),
+        # LLMs sometimes confuse `session_tag` with `session`. Treat numeric
+        # strings as session_tag hints and prefer current event's unified_msg_origin
+        # to avoid MessageSession.from_str failing on values like '2780464014'.
+        if (
+            isinstance(session, str)
+            and ":" not in session
+            and session.strip().isdigit()
+        ):
+            unified = getattr(context.context.event, "unified_msg_origin", None)
+            if unified:
+                logger.info(
+                    "send_message_to_user: received numeric session '%s', treating as session_tag and using current unified_msg_origin '%s'",
+                    session,
+                    unified,
+                )
+                session = unified
+
         try:
             target_session = (
                 MessageSession.from_str(session)

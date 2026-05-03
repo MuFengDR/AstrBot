@@ -94,17 +94,25 @@ class WakingCheckStage(Stage):
 
         # 设置 sender 身份
         event.message_str = event.message_str.strip()
+        # 标识消息是否为 @ 机器人（用于后续判断）
+        event.is_at_bot = False
         for admin_id in self.ctx.astrbot_config["admins_id"]:
             if str(event.get_sender_id()) == admin_id:
                 event.role = "admin"
                 break
-
+        if not event.get_group_id() and event.role != "admin":
+            event.stop_event()
+            return
         # 检查 wake
         wake_prefixes = self.ctx.astrbot_config["wake_prefix"]
         messages = event.get_messages()
         is_wake = False
         for wake_prefix in wake_prefixes:
             if event.message_str.startswith(wake_prefix):
+                for message in messages:
+                    if isinstance(message, At):
+                        event.set_at_usr_info()
+                        break
                 if (
                     not event.is_private_chat()
                     and isinstance(messages[0], At)
@@ -132,6 +140,7 @@ class WakingCheckStage(Stage):
                         and str(message.sender_id) == str(event.get_self_id())
                     )
                 ):
+                    event.is_at_bot = True
                     is_wake = True
                     event.is_wake = True
                     wake_prefix = ""
