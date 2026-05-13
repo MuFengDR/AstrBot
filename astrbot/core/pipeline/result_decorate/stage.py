@@ -74,6 +74,11 @@ class ResultDecorateStage(Stage):
         self.split_words = ctx.astrbot_config["platform_settings"][
             "segmented_reply"
         ].get("split_words", ["。", "？", "！", "~", "…"])
+        # 支持配置中使用转义字符串表示换行符
+        self.split_words = [
+            "\n" if word in ("\\n", "\\r\\n") else word
+            for word in self.split_words
+        ]
         if self.split_words:
             escaped_words = sorted(
                 [re.escape(word) for word in self.split_words], key=len, reverse=True
@@ -103,6 +108,7 @@ class ResultDecorateStage(Stage):
 
     def _split_text_by_words(self, text: str) -> list[str]:
         """使用分段词列表分段文本"""
+        text = text.replace("\r\n", "\n")
         if not self.split_words_pattern:
             return [text]
 
@@ -114,6 +120,8 @@ class ResultDecorateStage(Stage):
                 if not isinstance(content, str):
                     continue
                 for word in self.split_words:
+                    if word == '\\n':
+                        word = '\n'
                     if content.endswith(word):
                         content = content[: -len(word)]
                         break
