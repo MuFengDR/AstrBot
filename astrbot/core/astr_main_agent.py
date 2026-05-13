@@ -1280,14 +1280,15 @@ async def build_main_agent(
             ):
                 return None
 
-            # 仅在消息以 provider_wake_prefix 开头时截断前缀，否则保留原始消息
-            if config.provider_wake_prefix and event.message_str.startswith(
-                config.provider_wake_prefix
-            ):
-                req.prompt = event.message_str[len(config.provider_wake_prefix) :]
-            else:
-                req.prompt = event.message_str
+            # # 仅在消息以 provider_wake_prefix 开头时截断前缀，否则保留原始消息
+            # if config.provider_wake_prefix and event.message_str.startswith(
+            #     config.provider_wake_prefix
+            # ):
+            #     req.prompt = event.message_str[len(config.provider_wake_prefix) :]
+            # else:
+            #     req.prompt = event.message_str
 
+            req.prompt = event.message_str
             # media files attachments
             for comp in event.message_obj.message:
                 if isinstance(comp, Image):

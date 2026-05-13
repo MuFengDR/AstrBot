@@ -152,6 +152,7 @@ class WakingCheckStage(Stage):
                 event.is_wake = True
                 event.is_at_or_wake_command = True
                 wake_prefix = ""
+                event.is_at_bot = True
 
         # 检查插件的 handler filter
         activated_handlers = []
