@@ -17,12 +17,12 @@ class AgentRequestSubStage(Stage):
 
         self.bot_wake_prefixs: list[str] = self.config["wake_prefix"]
         self.prov_wake_prefix: str = self.config["provider_settings"]["wake_prefix"]
-        for bwp in self.bot_wake_prefixs:
-            if self.prov_wake_prefix.startswith(bwp):
-                logger.info(
-                    f"识别 LLM 聊天额外唤醒前缀 {self.prov_wake_prefix} 以机器人唤醒前缀 {bwp} 开头，已自动去除。",
-                )
-                self.prov_wake_prefix = self.prov_wake_prefix[len(bwp) :]
+        # for bwp in self.bot_wake_prefixs:
+        #     if self.prov_wake_prefix.startswith(bwp):
+        #         logger.info(
+        #             f"识别 LLM 聊天额外唤醒前缀 {self.prov_wake_prefix} 以机器人唤醒前缀 {bwp} 开头，已自动去除。",
+        #         )
+        #         self.prov_wake_prefix = self.prov_wake_prefix[len(bwp) :]
 
         agent_runner_type = self.config["provider_settings"]["agent_runner_type"]
         if agent_runner_type == "local":
