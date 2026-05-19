@@ -1287,6 +1287,11 @@ async def build_main_agent(
             #     req.prompt = event.message_str[len(config.provider_wake_prefix) :]
             # else:
             #     req.prompt = event.message_str
+            if event.is_at_or_wake_command:
+                # 如果在唤醒阶段被剪掉了 wake_prefix，则在这里把它还原到 message_str 开头
+                wake_prefix = event.get_extra("wake_prefix_removed")
+                if wake_prefix:
+                    event.message_str = f"{wake_prefix}{event.message_str}"
 
             req.prompt = event.message_str
             # media files attachments

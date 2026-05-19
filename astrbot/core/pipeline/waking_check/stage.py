@@ -124,6 +124,8 @@ class WakingCheckStage(Stage):
                 is_wake = True
                 event.is_at_or_wake_command = True
                 event.is_wake = True
+                # 保存被剪掉的 wake_prefix，以便后续需要时还原
+                event.set_extra("wake_prefix_removed", wake_prefix)
                 event.message_str = event.message_str[len(wake_prefix) :].strip()
                 break
         if not is_wake:
