@@ -203,6 +203,76 @@ async def test_subagent_config_accepts_default_persona(
 
 
 @pytest.mark.asyncio
+async def test_persona_create_preserves_empty_tools_list(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    persona_id = f"empty-tools-{uuid.uuid4().hex}"
+
+    response = await test_client.post(
+        "/api/persona/create",
+        json={
+            "persona_id": persona_id,
+            "system_prompt": "You are a test persona.",
+            "tools": [],
+            "skills": None,
+        },
+        headers=authenticated_header,
+    )
+
+    try:
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+
+        persona = await core_lifecycle_td.persona_mgr.get_persona(persona_id)
+        assert persona is not None
+        assert persona.tools == []
+    finally:
+        try:
+            await core_lifecycle_td.persona_mgr.delete_persona(persona_id)
+        except ValueError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_persona_create_preserves_null_tools_as_all_tools(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    persona_id = f"all-tools-{uuid.uuid4().hex}"
+
+    response = await test_client.post(
+        "/api/persona/create",
+        json={
+            "persona_id": persona_id,
+            "system_prompt": "You are a test persona.",
+            "tools": None,
+            "skills": None,
+        },
+        headers=authenticated_header,
+    )
+
+    try:
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+
+        persona = await core_lifecycle_td.persona_mgr.get_persona(persona_id)
+        assert persona is not None
+        assert persona.tools is None
+    finally:
+        try:
+            await core_lifecycle_td.persona_mgr.delete_persona(persona_id)
+        except ValueError:
+            pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("payload", [[], "x"])
 async def test_batch_delete_sessions_rejects_non_object_payload(
     app: Quart, authenticated_header: dict, payload

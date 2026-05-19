@@ -104,6 +104,8 @@ from astrbot.core.utils.quoted_message_parser import (
 )
 from astrbot.core.utils.string_utils import normalize_and_dedupe_strings
 
+_PERSONA_ALLOWED_TOOLS_ATTR = "_persona_allowed_tool_names"
+
 
 @dataclass(slots=True)
 class MainAgentBuildConfig:
@@ -171,6 +173,71 @@ class MainAgentBuildResult:
     reset_coro: Coroutine | None = None
 
 
+def _set_persona_allowed_tools(req: ProviderRequest, persona: dict | None) -> None:
+    if not persona or persona.get("tools") is None:
+        setattr(req, _PERSONA_ALLOWED_TOOLS_ATTR, None)
+        return
+
+    allowed_tools = {
+        str(tool_name).strip()
+        for tool_name in persona.get("tools", [])
+        if str(tool_name).strip()
+    }
+    setattr(req, _PERSONA_ALLOWED_TOOLS_ATTR, allowed_tools)
+
+
+def _persona_allows_tool(
+    req: ProviderRequest,
+    tool_name: str,
+    *,
+    aliases: tuple[str, ...] = (),
+) -> bool:
+    allowed_tools = getattr(req, _PERSONA_ALLOWED_TOOLS_ATTR, None)
+    if allowed_tools is None:
+        return True
+    return tool_name in allowed_tools or any(
+        alias in allowed_tools for alias in aliases
+    )
+
+
+def _add_builtin_tool_if_allowed(
+    req: ProviderRequest,
+    tool_mgr,
+    tool,
+    *,
+    aliases: tuple[str, ...] = (),
+) -> None:
+    builtin_tool = tool_mgr.get_builtin_tool(tool)
+    if not getattr(builtin_tool, "active", True) or not _persona_allows_tool(
+        req, builtin_tool.name, aliases=aliases
+    ):
+        return
+    if req.func_tool is None:
+        req.func_tool = ToolSet()
+    req.func_tool.add_tool(builtin_tool)
+
+
+def _get_non_builtin_func_tool(tool_mgr, tool_name: str):
+    func_list = getattr(tool_mgr, "func_list", None)
+    if isinstance(func_list, list):
+        for tool in reversed(func_list):
+            if tool.name == tool_name and getattr(tool, "active", True):
+                return tool
+        for tool in reversed(func_list):
+            if tool.name == tool_name:
+                return tool
+
+    is_builtin_tool = getattr(tool_mgr, "is_builtin_tool", None)
+    if callable(is_builtin_tool):
+        try:
+            if is_builtin_tool(tool_name) is True:
+                return None
+        except Exception:
+            pass
+
+    return tool_mgr.get_func(tool_name)
+
+
 def _select_provider(
     event: AstrMessageEvent, plugin_context: Context
 ) -> Provider | None:
@@ -234,12 +301,10 @@ async def _apply_kb(
         except Exception as exc:  # noqa: BLE001
             logger.error("Error occurred while retrieving knowledge base: %s", exc)
     else:
-        if req.func_tool is None:
-            req.func_tool = ToolSet()
-        req.func_tool.add_tool(
-            plugin_context.get_llm_tool_manager().get_builtin_tool(
-                KnowledgeBaseQueryTool
-            )
+        _add_builtin_tool_if_allowed(
+            req,
+            plugin_context.get_llm_tool_manager(),
+            KnowledgeBaseQueryTool,
         )
 
 
@@ -341,15 +406,16 @@ def _apply_workspace_extra_prompt(
 
 
 def _apply_local_env_tools(req: ProviderRequest, plugin_context: Context) -> None:
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
     tool_mgr = plugin_context.get_llm_tool_manager()
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExecuteShellTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(LocalPythonTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileReadTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileWriteTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileEditTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
+    for tool in (
+        ExecuteShellTool,
+        LocalPythonTool,
+        FileReadTool,
+        FileWriteTool,
+        FileEditTool,
+        GrepTool,
+    ):
+        _add_builtin_tool_if_allowed(req, tool_mgr, tool)
     req.system_prompt = f"{req.system_prompt or ''}\n{_build_local_mode_prompt()}\n"
 
 
@@ -393,6 +459,7 @@ async def _ensure_persona_and_skills(
     set_persona_custom_error_message_on_event(
         event, extract_persona_custom_error_message_from_persona(persona)
     )
+    _set_persona_allowed_tools(req, persona)
 
     if persona:
         # Inject persona system prompt
@@ -435,7 +502,7 @@ async def _ensure_persona_and_skills(
         persona_toolset = ToolSet()
         if persona["tools"]:
             for tool_name in persona["tools"]:
-                tool = tmgr.get_func(tool_name)
+                tool = _get_non_builtin_func_tool(tmgr, tool_name)
                 if tool and tool.active:
                     persona_toolset.add_tool(tool)
     if not req.func_tool:
@@ -1068,8 +1135,6 @@ def _apply_sandbox_tools(
     req: ProviderRequest,
     session_id: str,
 ) -> None:
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
     if req.system_prompt is None:
         req.system_prompt = ""
     booter = config.sandbox_cfg.get("booter", "shipyard_neo")
@@ -1083,14 +1148,17 @@ def _apply_sandbox_tools(
         os.environ["SHIPYARD_ACCESS_TOKEN"] = at
 
     tool_mgr = llm_tools
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(ExecuteShellTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(PythonTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileUploadTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileDownloadTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileReadTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileWriteTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FileEditTool))
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(GrepTool))
+    for tool in (
+        ExecuteShellTool,
+        PythonTool,
+        FileUploadTool,
+        FileDownloadTool,
+        FileReadTool,
+        FileWriteTool,
+        FileEditTool,
+        GrepTool,
+    ):
+        _add_builtin_tool_if_allowed(req, tool_mgr, tool)
     if booter == "shipyard_neo":
         # Neo-specific path rule: filesystem tools operate relative to sandbox
         # workspace root. Do not prepend "/workspace".
@@ -1126,31 +1194,35 @@ def _apply_sandbox_tools(
         # Browser tools: only register if profile supports browser
         # (or if capabilities are unknown because sandbox hasn't booted yet)
         if sandbox_capabilities is None or "browser" in sandbox_capabilities:
-            req.func_tool.add_tool(tool_mgr.get_builtin_tool(BrowserExecTool))
-            req.func_tool.add_tool(tool_mgr.get_builtin_tool(BrowserBatchExecTool))
-            req.func_tool.add_tool(tool_mgr.get_builtin_tool(RunBrowserSkillTool))
+            for tool in (
+                BrowserExecTool,
+                BrowserBatchExecTool,
+                RunBrowserSkillTool,
+            ):
+                _add_builtin_tool_if_allowed(req, tool_mgr, tool)
 
         # Neo-specific tools (always available for shipyard_neo)
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(GetExecutionHistoryTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(AnnotateExecutionTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(CreateSkillPayloadTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(GetSkillPayloadTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(CreateSkillCandidateTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(ListSkillCandidatesTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(EvaluateSkillCandidateTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(PromoteSkillCandidateTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(ListSkillReleasesTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(RollbackSkillReleaseTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(SyncSkillReleaseTool))
+        for tool in (
+            GetExecutionHistoryTool,
+            AnnotateExecutionTool,
+            CreateSkillPayloadTool,
+            GetSkillPayloadTool,
+            CreateSkillCandidateTool,
+            ListSkillCandidatesTool,
+            EvaluateSkillCandidateTool,
+            PromoteSkillCandidateTool,
+            ListSkillReleasesTool,
+            RollbackSkillReleaseTool,
+            SyncSkillReleaseTool,
+        ):
+            _add_builtin_tool_if_allowed(req, tool_mgr, tool)
 
     req.system_prompt = f"{req.system_prompt or ''}\n{SANDBOX_MODE_PROMPT}\n"
 
 
 def _proactive_cron_job_tools(req: ProviderRequest, plugin_context: Context) -> None:
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
     tool_mgr = plugin_context.get_llm_tool_manager()
-    req.func_tool.add_tool(tool_mgr.get_builtin_tool(FutureTaskTool))
+    _add_builtin_tool_if_allowed(req, tool_mgr, FutureTaskTool)
 
 
 async def _apply_web_search_tools(
@@ -1165,20 +1237,22 @@ async def _apply_web_search_tools(
     if not prov_settings.get("web_search", False):
         return
 
-    if req.func_tool is None:
-        req.func_tool = ToolSet()
-
     tool_mgr = plugin_context.get_llm_tool_manager()
     provider = prov_settings.get("websearch_provider", "tavily")
     if provider == "tavily":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(TavilyWebSearchTool))
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(TavilyExtractWebPageTool))
+        _add_builtin_tool_if_allowed(req, tool_mgr, TavilyWebSearchTool)
+        _add_builtin_tool_if_allowed(
+            req,
+            tool_mgr,
+            TavilyExtractWebPageTool,
+            aliases=("web_search_tavily",),
+        )
     elif provider == "bocha":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BochaWebSearchTool))
+        _add_builtin_tool_if_allowed(req, tool_mgr, BochaWebSearchTool)
     elif provider == "brave":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BraveWebSearchTool))
+        _add_builtin_tool_if_allowed(req, tool_mgr, BraveWebSearchTool)
     elif provider == "baidu_ai_search":
-        req.func_tool.add_tool(tool_mgr.get_builtin_tool(BaiduWebSearchTool))
+        _add_builtin_tool_if_allowed(req, tool_mgr, BaiduWebSearchTool)
 
 
 def _get_compress_provider(
@@ -1462,12 +1536,10 @@ async def build_main_agent(
         _proactive_cron_job_tools(req, plugin_context)
 
     if event.platform_meta.support_proactive_message:
-        if req.func_tool is None:
-            req.func_tool = ToolSet()
-        req.func_tool.add_tool(
-            plugin_context.get_llm_tool_manager().get_builtin_tool(
-                SendMessageToUserTool
-            )
+        _add_builtin_tool_if_allowed(
+            req,
+            plugin_context.get_llm_tool_manager(),
+            SendMessageToUserTool,
         )
 
     if provider.provider_config.get("max_context_tokens", 0) <= 0:

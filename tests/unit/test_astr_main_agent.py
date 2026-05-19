@@ -398,6 +398,105 @@ class TestBuiltinToolInjection:
         assert req.func_tool is not None
         assert req.func_tool.get_tool("web_search_baidu") is builtin_tool
 
+    @pytest.mark.asyncio
+    async def test_web_search_tools_allowed_when_persona_tools_null(
+        self, mock_event, mock_context
+    ):
+        """tools=None allows configured builtin web search tools."""
+        module = ama
+        req = ProviderRequest()
+        module._set_persona_allowed_tools(req, {"tools": None})
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "web_search": True,
+                "websearch_provider": "bocha",
+            }
+        }
+
+        await module._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert req.func_tool is not None
+        assert req.func_tool.get_tool("web_search_bocha") is not None
+
+    @pytest.mark.asyncio
+    async def test_web_search_tools_blocked_when_persona_tools_empty(
+        self, mock_event, mock_context
+    ):
+        """tools=[] blocks configured builtin web search tools."""
+        module = ama
+        req = ProviderRequest()
+        module._set_persona_allowed_tools(req, {"tools": []})
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "web_search": True,
+                "websearch_provider": "brave",
+            }
+        }
+
+        await module._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert req.func_tool is None
+
+    @pytest.mark.asyncio
+    async def test_tavily_persona_tool_allows_search_and_extract(
+        self, mock_event, mock_context
+    ):
+        """Allowing web_search_tavily also allows its page extraction companion."""
+        module = ama
+        req = ProviderRequest()
+        module._set_persona_allowed_tools(req, {"tools": ["web_search_tavily"]})
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "web_search": True,
+                "websearch_provider": "tavily",
+            }
+        }
+
+        await module._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert req.func_tool is not None
+        assert req.func_tool.get_tool("web_search_tavily") is not None
+        assert req.func_tool.get_tool("tavily_extract_web_page") is not None
+
+    @pytest.mark.asyncio
+    async def test_persona_tool_list_supports_plugin_and_builtin_tools(
+        self, mock_event, mock_context
+    ):
+        """Persona tool lists can combine regular tools with builtin tool names."""
+        module = ama
+        plugin_tool = FunctionTool(
+            name="plugin_tool",
+            parameters={"type": "object", "properties": {}},
+            description="plugin tool",
+        )
+        persona = {
+            "name": "persona",
+            "prompt": "Test persona",
+            "tools": ["plugin_tool", "web_search_bocha"],
+        }
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=("persona", persona, None, False)
+        )
+        tmgr = mock_context.get_llm_tool_manager.return_value
+        tmgr.get_func.side_effect = lambda name: (
+            plugin_tool if name == "plugin_tool" else None
+        )
+        mock_context.get_config.return_value = {
+            "provider_settings": {
+                "web_search": True,
+                "websearch_provider": "bocha",
+            }
+        }
+        req = ProviderRequest()
+        req.conversation = MagicMock(persona_id="persona")
+
+        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._apply_web_search_tools(mock_event, req, mock_context)
+
+        assert req.func_tool is not None
+        assert req.func_tool.get_tool("plugin_tool") is plugin_tool
+        assert req.func_tool.get_tool("web_search_bocha") is not None
+
     def test_proactive_cron_job_tools_uses_builtin_tool_manager(self, mock_context):
         """Test cron tool injection through the builtin tool manager."""
         module = ama
