@@ -6,6 +6,7 @@ from openai import NOT_GIVEN, AsyncOpenAI
 
 from astrbot import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+from .text_processing import remove_bracketed
 
 from ..entities import ProviderType
 from ..provider import TTSProvider
@@ -48,10 +49,11 @@ class ProviderOpenAITTSAPI(TTSProvider):
     async def get_audio(self, text: str) -> str:
         temp_dir = get_astrbot_temp_path()
         path = os.path.join(temp_dir, f"openai_tts_api_{uuid.uuid4()}.wav")
+        text = remove_bracketed(text)
         async with self.client.audio.speech.with_streaming_response.create(
             model=self.model_name,
             voice=self.voice,
-            response_format="wav",
+            # response_format="wav",
             input=text,
         ) as response:
             with open(path, "wb") as f:
